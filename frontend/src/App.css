@@ -1,0 +1,5 @@
+@import "tailwindcss";
+/* src/index.css or src/App.css */
+.react-datepicker-popper {
+  z-index: 9999 !important;
+}
