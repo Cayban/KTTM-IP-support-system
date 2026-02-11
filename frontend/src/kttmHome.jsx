@@ -33,6 +33,7 @@ export default function KttmDashboardPage() {
   const [dayModal, setDayModal] = useState({ open: false, dateKey: "", items: [] });
 
   // ✅ lock body scroll (page itself not scrollable)
+  // You can keep this; but with the flex layout below, it's already safe.
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -366,12 +367,13 @@ export default function KttmDashboardPage() {
   }
 
   return (
-    <div className="h-screen overflow-hidden text-slate-900 bg-cover bg-center" style={{ backgroundImage: "url('/bsuBG.jpg')" }}>
+    // ✅ KEY FIX: flex column page; no hardcoded header height math
+    <div className="h-screen overflow-hidden flex flex-col text-slate-900 bg-cover bg-center" style={{ backgroundImage: "url('/bsuBG.jpg')" }}>
       {/* dark overlay for readability */}
       <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-[2px] -z-10" />
 
-      {/* Header (fixed height) */}
-      <header className="sticky top-0 z-20">
+      {/* Header (shrink-0, sticky) */}
+      <header className="sticky top-0 z-20 shrink-0">
         <div className="backdrop-blur-md bg-slate-950/55 border-b border-white/10">
           <div className="w-full px-5 md:px-8 xl:px-10 py-3">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -399,15 +401,15 @@ export default function KttmDashboardPage() {
         </div>
       </header>
 
-      {/* Main area: fixed viewport, internal scroll only */}
-      <main className="h-[calc(100vh-64px)] overflow-hidden px-5 md:px-8 xl:px-10 py-4">
+      {/* ✅ KEY FIX: main is flex-1 min-h-0 so internal scroll works and bottom won't get cut */}
+      <main className="flex-1 min-h-0 overflow-hidden px-5 md:px-8 xl:px-10 py-4">
         {/* Outer shell */}
         <div className="h-full rounded-3xl bg-white/90 backdrop-blur-sm border border-white/30 shadow-2xl overflow-hidden">
           {/* Two-column layout */}
           <div className="h-full grid grid-cols-1 xl:grid-cols-12 gap-0">
             {/* LEFT: scrollable sidebar */}
-            <aside className="xl:col-span-3 h-full border-r border-slate-200/70 bg-white/60">
-              <div className="h-full overflow-y-auto overscroll-contain p-4 space-y-4">
+            <aside className="xl:col-span-3 h-full min-h-0 border-r border-slate-200/70 bg-white/60">
+              <div className="h-full min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4">
                 <Card>
                   <CardHeader title="Quick Actions" subtitle="Shortcuts for KTTM workflow" />
                   <div className="p-4 pt-0 space-y-3">
@@ -491,9 +493,9 @@ export default function KttmDashboardPage() {
               </div>
             </aside>
 
-            {/* RIGHT: top summary fixed + content scroll */}
-            <section className="xl:col-span-9 h-full overflow-hidden flex flex-col">
-              {/* Fixed top strip (KPIs + status overview compact) */}
+            {/* RIGHT: fixed top + scroll body */}
+            <section className="xl:col-span-9 h-full min-h-0 overflow-hidden flex flex-col">
+              {/* Fixed top strip */}
               <div className="shrink-0 p-4 border-b border-slate-200/70 bg-white/70">
                 {loading && (
                   <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-600 mb-3">
@@ -536,13 +538,12 @@ export default function KttmDashboardPage() {
                 </div>
               </div>
 
-              {/* Scrollable right content */}
-              <div className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-4">
-                {/* Calendar + Upcoming Events in a fixed-height row (both scroll internally where needed) */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                  {/* Calendar */}
+              {/* ✅ This is the only scrollbar for the RIGHT content */}
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                  {/* ✅ Calendar: NO internal scrollbar now */}
                   <div className="lg:col-span-7">
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[560px]">
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
                       <div className="p-4 border-b border-slate-200 flex items-center justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-sm font-bold">IP Calendar</div>
@@ -572,7 +573,8 @@ export default function KttmDashboardPage() {
                         </div>
                       </div>
 
-                      <div className="p-4 flex-1 overflow-y-auto min-h-0">
+                      {/* ✅ Removed overflow-y-auto here */}
+                      <div className="p-4">
                         <div className="grid grid-cols-7 gap-2 text-[11px] font-semibold text-slate-500 mb-2">
                           {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
                             <div key={d} className="text-center">
@@ -581,7 +583,6 @@ export default function KttmDashboardPage() {
                           ))}
                         </div>
 
-                        {/* slightly more compact cells for density */}
                         <div className="grid grid-cols-7 gap-2">
                           {calGrid.map((cell) => {
                             const dateKey = cell.dateKey;
@@ -649,7 +650,7 @@ export default function KttmDashboardPage() {
                     </div>
                   </div>
 
-                  {/* Upcoming Events (fixed height card with scroll body) */}
+                  {/* Upcoming Events: keep internal scroll (your choice) */}
                   <div className="lg:col-span-5">
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[560px]">
                       <div className="p-4 border-b border-slate-200 bg-slate-50/50">
@@ -967,6 +968,7 @@ export default function KttmDashboardPage() {
                   </div>
                 </div>
 
+                {/* ✅ Footer won't get cut now; right column scroll reaches it */}
                 <div className="text-center text-xs text-slate-500 py-6">
                   © {new Date().getFullYear()} KTTM Unit · Dashboard Analytics
                 </div>
@@ -1364,15 +1366,6 @@ function Chip({ children }) {
   return (
     <div className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-700 text-center">
       {children}
-    </div>
-  );
-}
-
-function InfoRow({ label, value }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-xl bg-white border border-slate-200 px-3 py-2">
-      <div className="text-xs font-semibold text-slate-500">{label}</div>
-      <div className="text-xs font-bold text-slate-800">{value}</div>
     </div>
   );
 }
