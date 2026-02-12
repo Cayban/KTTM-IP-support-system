@@ -1,6 +1,8 @@
 // src/pages/IpAssetsPage.jsx
 import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
+import rmsLogo from "./assets/rmslogo.png";
+import kttmLogo from "./assets/KTTM.jpg";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
 
@@ -22,7 +24,16 @@ export default function IpAssetsPage() {
   const [sortField, setSortField] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
 
-  // Sorting helpers (defined early so useEffect can call them)
+  // Modal / Form
+  const [modalOpen, setModalOpen] = useState(false);
+  const [mode, setMode] = useState("create"); // create | edit
+  const [activeRow, setActiveRow] = useState(null);
+
+  // ✅ Next Record ID preview (read-only display)
+  const [nextRecordId, setNextRecordId] = useState(""); // e.g., KTTM-021
+  const [nextIdLoading, setNextIdLoading] = useState(false);
+
+  // Sorting helpers
   function sortRows(arr, field, dir) {
     if (!field) return arr;
     return [...arr].sort((a, b) => {
@@ -44,18 +55,13 @@ export default function IpAssetsPage() {
     setRows((curr) => sortRows(curr, field, newDir));
   }
 
-  // Modal / Form
-  const [modalOpen, setModalOpen] = useState(false);
-  const [mode, setMode] = useState("create"); // create | edit
-  const [activeRow, setActiveRow] = useState(null);
-
   const [form, setForm] = useState({
     ip_type: "Patent",
     title: "",
-    inventors: "",
+    inventors: [], // array of {name, gender}
     shil_id_number: "",
     registration_date: "",
-    next_due_date: "", // renewal / due date (manual override)
+    next_due_date: "",
     link: "", // gdrive link
     remarks: "Unregistered",
     campus: "",
@@ -88,7 +94,7 @@ export default function IpAssetsPage() {
 
   const [campusOptions, setCampusOptions] = useState(["All"]);
 
-  // Load full campus list once so the dropdown doesn't shrink when filtering
+  // Load full campus list once
   useEffect(() => {
     let mounted = true;
     (async function fetchCampuses() {
@@ -108,14 +114,55 @@ export default function IpAssetsPage() {
 
         if (!mounted) return;
         setCampusOptions(["All", ...Array.from(s).sort()]);
-      } catch (e) {
-        // ignore; campus dropdown remains at default
+      } catch {
+        // ignore
       }
     })();
     return () => {
       mounted = false;
     };
   }, []);
+
+  // ✅ Fetch next record id preview (create mode)
+  // ✅ Robust fallback: if /api/records/next-id fails or returns blank,
+  //    compute next from current loaded rows (max numeric suffix + 1).
+  function computeNextFromRows(currentRows) {
+    const re = /^kttm-(\d+)$/i;
+    let max = 0;
+    for (const r of currentRows || []) {
+      const m = re.exec(String(r.id || "").trim());
+      if (!m) continue;
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+    const nextNum = max + 1;
+
+    // Keep your UI style as KTTM-### (pad 3)
+    const padded = String(nextNum).padStart(3, "0");
+    return `KTTM-${padded}`;
+  }
+
+  async function fetchNextRecordId() {
+    try {
+      setNextIdLoading(true);
+
+      const res = await fetch(`${API_BASE}/api/records/next-id`, { cache: "no-store" });
+      const data = await res.json();
+
+      if (res.ok && data?.ok && data?.next_id) {
+        setNextRecordId(String(data.next_id));
+        return;
+      }
+
+      // fallback if backend not ready / returns blank
+      setNextRecordId(computeNextFromRows(rows));
+    } catch {
+      // fallback if backend route errors
+      setNextRecordId(computeNextFromRows(rows));
+    } finally {
+      setNextIdLoading(false);
+    }
+  }
 
   // Load rows
   useEffect(() => {
@@ -138,7 +185,13 @@ export default function IpAssetsPage() {
           signal: ac.signal,
         });
         const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data?.error || "Failed to load records");
+
+        if (!res.ok) {
+          throw new Error(data?.error || `HTTP ${res.status}: Failed to load records`);
+        }
+        if (!data.ok) {
+          throw new Error(data?.error || "Failed to load records");
+        }
 
         const mapped = (data.rows || []).map((r) => ({
           id: r.id,
@@ -155,7 +208,10 @@ export default function IpAssetsPage() {
 
         setRows(sortRows(mapped, sortField, sortDir));
       } catch (e) {
-        if (e.name !== "AbortError") setErrMsg(e.message || "Error");
+        if (e.name !== "AbortError") {
+          console.error("Load error:", e);
+          setErrMsg(e.message || "Failed to load records");
+        }
       } finally {
         setLoading(false);
       }
@@ -172,10 +228,7 @@ export default function IpAssetsPage() {
     const reg = parseDateFlexible(form.registration_date);
     if (!reg) return;
 
-    // If user already typed a value, keep it
     if (String(form.next_due_date || "").trim()) return;
-
-    // If status is Recently Filed, don't compute due date yet
     if (String(form.remarks || "").trim() === "Recently Filed") return;
 
     const computed = computeNextDueDate(form.ip_type, reg);
@@ -185,22 +238,27 @@ export default function IpAssetsPage() {
   }, [modalOpen, form.ip_type, form.registration_date, form.remarks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Helpers
-  const openCreate = () => {
+  const openCreate = async () => {
     const next = {
       ip_type: "Patent",
       title: "",
-      inventors: "",
+      inventors: [],
       shil_id_number: "",
       registration_date: "",
       next_due_date: "",
       link: "",
       remarks: "Unregistered",
-      campus: "",
+      // If the user has a campus filter active, prefill that value for convenience
+      campus: campusFilter && campusFilter !== "All" ? campusFilter : "",
     };
     setMode("create");
     setActiveRow(null);
     setForm(next);
     setModalOpen(true);
+
+    // ✅ show next ID (read-only preview)
+    setNextRecordId("");
+    await fetchNextRecordId();
   };
 
   const openEdit = (row) => {
@@ -208,7 +266,6 @@ export default function IpAssetsPage() {
     const regParsed = parseDateFlexible(regVal);
     const nextFromDb = row.next_due_date === "—" ? "" : row.next_due_date;
 
-    // if DB has no next_due_date, compute it (except Recently Filed)
     const computed =
       String(row.remarks || "").trim() === "Recently Filed"
         ? ""
@@ -216,19 +273,30 @@ export default function IpAssetsPage() {
         ? formatDateISO(computeNextDueDate(row.ip_type || "Patent", regParsed) || regParsed)
         : "";
 
+    const inventorsList = [];
+    if (row.inventors && row.inventors !== "—") {
+      const lines = String(row.inventors).split("\n").filter((l) => l.trim());
+      lines.forEach((line) => {
+        if (line.trim()) inventorsList.push({ name: line.trim(), gender: "" });
+      });
+    }
+
     setMode("edit");
     setActiveRow(row);
     setForm({
       ip_type: row.ip_type || "Patent",
       title: row.title || "",
-      inventors: row.inventors || "",
-      shil_id_number: row.shil_id_number === "—" ? "" : row.shil_id_number,
+      inventors: inventorsList,
+      shil_id_number: row.shil_id_number === "—" ? "" : row.shil_id_number || "",
       registration_date: regVal,
       next_due_date: nextFromDb || computed || "",
-      link: row.link === "—" ? "" : row.link,
+      link: row.link === "—" ? "" : row.link || "",
       remarks: row.remarks || "Unregistered",
-      campus: row.campus === "—" ? "" : row.campus,
+      campus: row.campus === "—" ? "" : row.campus || "",
     });
+
+    // ✅ in edit mode, show actual record id (not "next")
+    setNextRecordId("");
     setModalOpen(true);
   };
 
@@ -238,72 +306,134 @@ export default function IpAssetsPage() {
     try {
       setErrMsg("");
 
-      // NOTE:
-      // If your backend uses gdrive_link, change `link: form.link` to `gdrive_link: form.link`
+      if (!form.title || !form.title.trim()) {
+        setErrMsg("Title is required");
+        return;
+      }
+
+      if (!form.ip_type || !form.ip_type.trim()) {
+        setErrMsg("IP Type is required");
+        return;
+      }
+
+      const inventorsString = form.inventors
+        .filter((inv) => inv.name && inv.name.trim())
+        .map((inv) => inv.name.trim())
+        .join("\n");
+
+      // Backend expects: title, ip_type, inventors, remarks, campus/location, registration_date
+      // Send `campus` explicitly (and keep `location` for backward compatibility)
       const payload = {
-        ip_type: form.ip_type,
-        title: form.title,
-        inventors: form.inventors,
-        shil_id_number: form.shil_id_number,
-        registration_date: form.registration_date,
-        next_due_date: form.next_due_date,
-        link: form.link,
-        remarks: form.remarks,
-        campus: form.campus,
+        title: form.title.trim(),
+        ip_type: form.ip_type.trim(),
+        inventors: inventorsString || null,
+        remarks: form.remarks ? form.remarks.trim() : "Unregistered",
+        campus: form.campus ? form.campus.trim() : null,
+        location: form.campus ? form.campus.trim() : null,
+        registration_date:
+          form.remarks === "Recently Filed"
+            ? null
+            : form.registration_date
+            ? form.registration_date.trim()
+            : null,
+        shil_id_number: form.shil_id_number ? form.shil_id_number.trim() : null,
+        gdrive_link: form.link ? form.link.trim() : null,
+
+        // ✅ IMPORTANT: we do NOT send record_id from frontend (server will generate it)
       };
 
+      let res, data;
+
       if (mode === "create") {
-        const res = await fetch(`${API_BASE}/api/ipassets`, {
+        res = await fetch(`${API_BASE}/api/ipassets`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data?.error || "Failed to create record");
-      } else {
-        const res = await fetch(`${API_BASE}/api/ipassets/${activeRow.id}`, {
+        data = await res.json();
+
+        if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}: Failed to create record`);
+        if (!data.ok) throw new Error(data?.error || "Failed to create record");
+
+        // If contributors data exist, create them separately
+        if (data.row && form.inventors.some((inv) => inv.gender)) {
+          try {
+            for (const inventor of form.inventors) {
+              if (inventor.name && inventor.name.trim() && inventor.gender) {
+                await fetch(`${API_BASE}/api/contributors`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    record_id: data.row.id || data.row.record_id,
+                    contributor_name: inventor.name.trim(),
+                    role: inventor.gender.trim(),
+                  }),
+                });
+              }
+            }
+          } catch (e) {
+            console.warn("Contributors added with warnings:", e.message);
+          }
+        }
+
+        setErrMsg("");
+      } else if (mode === "edit" && activeRow) {
+        res = await fetch(`${API_BASE}/api/ipassets/${activeRow.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data?.error || "Failed to update record");
+        data = await res.json();
+
+        if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}: Failed to update record`);
+        if (!data.ok) throw new Error(data?.error || "Failed to update record");
+
+        setErrMsg("");
       }
 
       closeModal();
       await reloadNow();
     } catch (e) {
+      console.error("Save error:", e);
       setErrMsg(e.message || "Save failed");
     }
   }
 
   async function reloadNow() {
-    const params = new URLSearchParams();
-    if (type !== "All") params.set("type", type);
-    if (campusFilter !== "All") params.set("campus", campusFilter);
-    if (status !== "All") params.set("status", status);
-    if (q.trim()) params.set("q", q.trim());
-    params.set("limit", "1000");
-    params.set("offset", "0");
+    try {
+      const params = new URLSearchParams();
+      if (type !== "All") params.set("type", type);
+      if (campusFilter !== "All") params.set("campus", campusFilter);
+      if (status !== "All") params.set("status", status);
+      if (q.trim()) params.set("q", q.trim());
+      params.set("limit", "1000");
+      params.set("offset", "0");
 
-    const res = await fetch(`${API_BASE}/api/ipassets?${params.toString()}`);
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data?.error || "Failed to load records");
+      const res = await fetch(`${API_BASE}/api/ipassets?${params.toString()}`);
+      const data = await res.json();
 
-    const mapped = (data.rows || []).map((r) => ({
-      id: r.id,
-      title: r.title ?? r.of_applicant ?? "",
-      ip_type: r.ip_type ?? "",
-      remarks: r.remarks ?? "",
-      inventors: r.inventors ?? "",
-      shil_id_number: r.shil_id_number ?? r.ipophil_id_number ?? r.ipophl_id ?? "—",
-      registration_date: r.registration_date ?? "—",
-      next_due_date: r.next_due_date ?? r.renewal_date ?? "—",
-      link: r.gdrive_link ?? r.link ?? "—",
-      campus: r.campus ?? r.location ?? "—",
-    }));
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}: Failed to load records`);
+      if (!data.ok) throw new Error(data?.error || "Failed to load records");
 
-    setRows(sortRows(mapped, sortField, sortDir));
+      const mapped = (data.rows || []).map((r) => ({
+        id: r.id,
+        title: r.title ?? r.of_applicant ?? "",
+        ip_type: r.ip_type ?? "",
+        remarks: r.remarks ?? "",
+        inventors: r.inventors ?? "",
+        shil_id_number: r.shil_id_number ?? r.ipophil_id_number ?? r.ipophl_id ?? "—",
+        registration_date: r.registration_date ?? "—",
+        next_due_date: r.next_due_date ?? r.renewal_date ?? "—",
+        link: r.gdrive_link ?? r.link ?? "—",
+        campus: r.campus ?? r.location ?? "—",
+      }));
+
+      setRows(sortRows(mapped, sortField, sortDir));
+      setErrMsg("");
+    } catch (e) {
+      console.error("Reload error:", e);
+      setErrMsg(e.message || "Failed to reload records");
+    }
   }
 
   async function deleteRow(row) {
@@ -313,12 +443,19 @@ export default function IpAssetsPage() {
     try {
       setErrMsg("");
 
-      const res = await fetch(`${API_BASE}/api/ipassets/${row.id}`, { method: "DELETE" });
+      const res = await fetch(`${API_BASE}/api/ipassets/${row.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
       const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data?.error || "Failed to delete record");
 
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}: Failed to delete record`);
+      if (!data.ok) throw new Error(data?.error || "Failed to delete record");
+
+      setErrMsg("");
       await reloadNow();
     } catch (e) {
+      console.error("Delete error:", e);
       setErrMsg(e.message || "Delete failed");
     }
   }
@@ -413,6 +550,11 @@ export default function IpAssetsPage() {
             </div>
 
             <div class="field">
+              <div class="label">Record ID</div>
+              <div class="value">${escapeHtml(row.id || "—")}</div>
+            </div>
+
+            <div class="field">
               <div class="label">Title</div>
               <div class="value">${escapeHtml(row.title || "—")}</div>
             </div>
@@ -499,20 +641,16 @@ export default function IpAssetsPage() {
     }
   }
 
-  // ✅ Next Due rendering rules for the TABLE cell
+  // Next Due rendering rules
   function renderNextDueCell(row) {
     const st = String(row.remarks || "").trim();
-
-    // Recently Filed: not registered yet, so due schedule not applicable
     if (st === "Recently Filed") {
       return <span className="text-xs font-semibold text-slate-500">Not registered yet</span>;
     }
 
-    // If due date is stored, show it
     const dueStored = parseDateFlexible(row.next_due_date);
     if (dueStored) return <span>{formatDateISO(dueStored)}</span>;
 
-    // Otherwise compute
     const reg = parseDateFlexible(row.registration_date);
     if (!reg) return <span className="text-slate-400">—</span>;
 
@@ -522,7 +660,6 @@ export default function IpAssetsPage() {
     return <span>{formatDateISO(computed)}</span>;
   }
 
-  // Used for export/print: returns STRING
   function getComputedNextDueString(row) {
     const st = String(row.remarks || "").trim();
     if (st === "Recently Filed") return "Not registered yet";
@@ -539,7 +676,7 @@ export default function IpAssetsPage() {
     return formatDateISO(computed);
   }
 
-  // ✅ Validity logic (renewal/expiry)
+  // Validity logic
   function computeValidity(row) {
     const today = startOfDay(new Date());
 
@@ -577,12 +714,34 @@ export default function IpAssetsPage() {
     return s;
   }
 
-  // ✅ Date helpers
+  // Inventor helpers
+  const addInventor = () => {
+    setForm((f) => ({
+      ...f,
+      inventors: [...f.inventors, { name: "", gender: "" }],
+    }));
+  };
+
+  const updateInventor = (index, field, value) => {
+    setForm((f) => {
+      const updated = [...f.inventors];
+      updated[index] = { ...updated[index], [field]: value };
+      return { ...f, inventors: updated };
+    });
+  };
+
+  const removeInventor = (index) => {
+    setForm((f) => ({
+      ...f,
+      inventors: f.inventors.filter((_, i) => i !== index),
+    }));
+  };
+
+  // Date helpers
   function parseDateFlexible(v) {
     const s = String(v ?? "").trim();
     if (!s || s === "—") return null;
 
-    // ISO date: 2024-09-27
     const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
     if (isoMatch) {
       const d = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
@@ -613,14 +772,6 @@ export default function IpAssetsPage() {
     return `${yyyy}-${mm}-${dd}`;
   }
 
-  /**
-   * ✅ Next Due / Renewal logic (simple & practical)
-   * - Trademark: renewal cycle every 10 years
-   * - Industrial Design: renew every 5 years (up to 15 total) → show next 5-year renewal
-   * - Patent: maintenance/annuity reminder yearly (simple)
-   * - Utility Model: term is limited → show "review/expiry" at 7 years
-   * - Copyright: usually no renewal schedule → null
-   */
   function computeNextDueDate(ipType, regDate) {
     const t = String(ipType || "").trim();
     if (!regDate) return null;
@@ -634,14 +785,6 @@ export default function IpAssetsPage() {
     return null;
   }
 
-  /**
-   * ✅ Expiry estimation (simple reminders; real-world rules can be more detailed)
-   * - Patent: ~20 years
-   * - Utility Model: 7 years
-   * - Industrial Design: 15 years max
-   * - Trademark: end of current 10-year cycle
-   * - Copyright: not handled here
-   */
   function computeExpiryDate(ipType, regDate) {
     const t = String(ipType || "").trim();
     if (!regDate) return null;
@@ -669,15 +812,21 @@ export default function IpAssetsPage() {
   }
 
   return (
-    <div className="h-screen overflow-hidden text-slate-900 bg-cover bg-center" style={{ backgroundImage: "url('/bsuBG.jpg')" }}>
+    <div
+      className="h-screen overflow-hidden text-slate-900 bg-cover bg-center"
+      style={{ backgroundImage: "url('/bsuBG.jpg')" }}
+    >
       {/* Header */}
-      <header className="sticky top-0 z-20 print:hidden">
+      <header className="fixed top-0 left-0 right-0 z-20 print:hidden">
         <div className="backdrop-blur-md bg-slate-950/55 border-b border-white/10">
           <div className="w-full px-6 lg:px-10 xl:px-14 py-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="h-11 w-11 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center overflow-hidden">
-                  <img src="/kttm.jpg" alt="KTTM Logo" className="h-full w-full object-contain scale-125" />
+                  <img src={kttmLogo} alt="KTTM Logo" className="h-full w-full object-contain" />
+                </div>
+                <div className="h-11 w-11 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center overflow-hidden">
+                  <img src={rmsLogo} alt="RMS Logo" className="h-full w-full object-contain scale-125" />
                 </div>
 
                 <div className="leading-tight">
@@ -690,7 +839,10 @@ export default function IpAssetsPage() {
                 <span className="px-3 py-1.5 rounded-md bg-white/10 border border-white/15">{dateStr}</span>
                 <span className="px-3 py-1.5 rounded-md bg-white/10 border border-white/15">{timeStr}</span>
 
-                <Link to="/kttmHome" className="px-3 py-1.5 rounded-md bg-white/10 border border-white/15 hover:bg-white/15 transition text-white">
+                <Link
+                  to="/kttmHome"
+                  className="px-3 py-1.5 rounded-md bg-white/10 border border-white/15 hover:bg-white/15 transition text-white"
+                >
                   Back to Dashboard
                 </Link>
               </div>
@@ -700,7 +852,7 @@ export default function IpAssetsPage() {
       </header>
 
       {/* Layout */}
-      <main className="w-full px-6 lg:px-10 xl:px-14 py-6 h-[calc(100vh-88px)] print:h-auto print:px-0 print:py-0">
+      <main className="w-full px-6 lg:px-10 xl:px-14 py-6 h-[calc(100vh-88px)] print:h-auto print:px-0 print:py-0 pt-[130px]">
         <div className="h-full rounded-3xl bg-white/90 backdrop-blur-sm border border-white/30 shadow-2xl p-6 lg:p-8 flex flex-col min-h-0 print:shadow-none print:border-0 print:p-0">
           {/* Toolbar */}
           <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3 print:hidden">
@@ -802,23 +954,27 @@ export default function IpAssetsPage() {
           <div className="mt-4 flex-1 min-h-0">
             <div className="h-full border border-slate-200 rounded-2xl overflow-auto bg-white">
               <div className="min-w-[1600px]">
-                {/* Sticky header */}
                 <div className="sticky top-0 z-10 grid grid-cols-12 gap-2 px-4 py-3 text-[11px] font-semibold text-slate-600 bg-slate-100 border-b border-slate-200">
                   <div className="col-span-3">Title</div>
                   <div className="col-span-3">Inventor/s</div>
                   <div className="col-span-1">Type</div>
                   <div className="col-span-1">Status</div>
                   <div className="col-span-1">
-                    <button type="button" onClick={() => toggleSort("shil_id_number")} className="flex items-center gap-1 text-left">
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("shil_id_number")}
+                      className="flex items-center gap-1 text-left"
+                    >
                       <span>IPOPHL ID</span>
-                      <span className="text-xs">{sortField === "shil_id_number" ? (sortDir === "asc" ? "▲" : "▼") : ""}</span>
+                      <span className="text-xs">
+                        {sortField === "shil_id_number" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                      </span>
                     </button>
                   </div>
                   <div className="col-span-1">Registration Date</div>
 
                   <div className="col-span-1">
                     <div>Next Due</div>
-                   
                   </div>
 
                   <div className="col-span-1">Validity</div>
@@ -839,7 +995,6 @@ export default function IpAssetsPage() {
                         key={r.id ?? `${r.title}-${r.shil_id_number}`}
                         className="px-4 py-3 grid grid-cols-12 gap-2 text-sm border-b border-slate-200 bg-white hover:bg-slate-50 transition"
                       >
-                        {/* Title */}
                         <div className="col-span-3 font-medium text-slate-900">
                           <div className="leading-snug">{r.title || "—"}</div>
                           <div className="text-xs text-slate-500 mt-1">
@@ -847,36 +1002,28 @@ export default function IpAssetsPage() {
                           </div>
                         </div>
 
-                        {/* Inventors */}
                         <div className="col-span-3 text-slate-800">
                           <div className="whitespace-pre-line leading-snug text-sm">{formatInventors(r.inventors)}</div>
                         </div>
 
-                        {/* Type */}
                         <div className="col-span-1">
                           <TypePill type={r.ip_type} />
                         </div>
 
-                        {/* Status */}
                         <div className="col-span-1">
                           <IpStatusPill status={r.remarks} />
                         </div>
 
-                        {/* IPOPHL ID */}
                         <div className="col-span-1 text-slate-700 break-words">{r.shil_id_number || "—"}</div>
 
-                        {/* Registration Date */}
                         <div className="col-span-1 text-slate-700">{formatDate(r.registration_date)}</div>
 
-                        {/* ✅ Next Due (computed if empty, note for Recently Filed) */}
                         <div className="col-span-1 text-slate-700">{renderNextDueCell(r)}</div>
 
-                        {/* Validity */}
                         <div className="col-span-1">
                           <ValidityPill tone={validity.tone} label={validity.label} />
                         </div>
 
-                        {/* Link */}
                         <div className="col-span-1">
                           {r.link && r.link !== "—" ? (
                             <a
@@ -893,7 +1040,6 @@ export default function IpAssetsPage() {
                           )}
                         </div>
 
-                        {/* Actions */}
                         <div className="col-span-1 flex items-center flex-nowrap gap-2 print:hidden">
                           <button
                             type="button"
@@ -924,7 +1070,6 @@ export default function IpAssetsPage() {
             </div>
           </div>
 
-          {/* Print footer */}
           <div className="mt-4 text-center text-xs text-slate-500 hidden print:block">
             © {new Date().getFullYear()} KTTM Unit · IP Asset List
           </div>
@@ -934,12 +1079,34 @@ export default function IpAssetsPage() {
       {/* Modal */}
       {modalOpen && (
         <Modal onClose={closeModal}>
-          <div className="text-lg font-black text-slate-900">{mode === "create" ? "Add IP Asset" : "Edit IP Asset"}</div>
+          <div className="text-lg font-black text-slate-900">
+            {mode === "create" ? "Add IP Asset" : "Edit IP Asset"}
+          </div>
           <div className="text-sm text-slate-600 mt-1">
             Fill up the fields then click <span className="font-semibold">Save</span>.
           </div>
 
           <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* ✅ Record ID field (read-only) */}
+            <Field label="Record ID (Auto)">
+              <input
+                value={
+                  mode === "edit"
+                    ? String(activeRow?.id || "")
+                    : nextIdLoading
+                    ? "Loading…"
+                    : nextRecordId
+                    ? nextRecordId
+                    : "Auto (server)"
+                }
+                disabled
+                className="w-full rounded-xl border border-slate-200 bg-slate-100 text-slate-600 px-3 py-2 text-sm cursor-not-allowed"
+              />
+              <div className="text-[11px] text-slate-500 mt-1">
+                This is generated automatically (e.g., KTTM-001).
+              </div>
+            </Field>
+
             <Field label="IP Type">
               <select
                 value={form.ip_type}
@@ -969,7 +1136,9 @@ export default function IpAssetsPage() {
                   </option>
                 ))}
               </select>
-              <div className="text-[11px] text-slate-500 mt-1">Note: Recently Filed = not registered yet (no renewal schedule).</div>
+              <div className="text-[11px] text-slate-500 mt-1">
+                Note: Recently Filed = not registered yet (no renewal schedule).
+              </div>
             </Field>
 
             <Field label="Title / Application Title">
@@ -982,12 +1151,49 @@ export default function IpAssetsPage() {
             </Field>
 
             <Field label="Inventors / Applicants">
-              <textarea
-                value={form.inventors}
-                onChange={(e) => setForm((f) => ({ ...f, inventors: e.target.value }))}
-                className="w-full min-h-[96px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                placeholder={"One per line, or comma-separated\ne.g.\nJuan Dela Cruz\nMaria Santos"}
-              />
+              <div className="space-y-2">
+                {form.inventors.length === 0 ? (
+                  <div className="text-sm text-slate-500 italic">No inventors added yet</div>
+                ) : (
+                  form.inventors.map((inventor, index) => (
+                    <div key={index} className="flex gap-2 items-end">
+                      <div className="flex-1">
+                        <input
+                          value={inventor.name}
+                          onChange={(e) => updateInventor(index, "name", e.target.value)}
+                          placeholder="Inventor name"
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
+                        />
+                      </div>
+                      <div className="w-[120px]">
+                        <select
+                          value={inventor.gender || ""}
+                          onChange={(e) => updateInventor(index, "gender", e.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
+                        >
+                          <option value="">Gender (opt.)</option>
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeInventor(index)}
+                        className="px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs font-semibold hover:bg-red-100 transition"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+                <button
+                  type="button"
+                  onClick={addInventor}
+                  className="w-full px-3 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-sm font-semibold hover:bg-slate-200 transition"
+                >
+                  + Add Inventor
+                </button>
+              </div>
             </Field>
 
             <Field label="IPOPHL ID">
@@ -1003,9 +1209,23 @@ export default function IpAssetsPage() {
               <input
                 value={form.registration_date}
                 onChange={(e) => setForm((f) => ({ ...f, registration_date: e.target.value, next_due_date: "" }))}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                placeholder="YYYY-MM-DD (recommended) or Sep 27, 2024"
+                disabled={form.remarks === "Recently Filed"}
+                className={`w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 ${
+                  form.remarks === "Recently Filed"
+                    ? "bg-slate-100 text-slate-500 cursor-not-allowed"
+                    : "bg-slate-50"
+                }`}
+                placeholder={
+                  form.remarks === "Recently Filed"
+                    ? "Not applicable (Recently Filed)"
+                    : "YYYY-MM-DD (recommended) or Sep 27, 2024"
+                }
               />
+              {form.remarks === "Recently Filed" && (
+                <div className="text-[11px] text-slate-500 mt-1">
+                  ℹ️ Registration date is not applicable for "Recently Filed" status
+                </div>
+              )}
             </Field>
 
             <Field label="Next Due / Renewal Date">
@@ -1046,12 +1266,12 @@ export default function IpAssetsPage() {
               />
             </Field>
 
-            <Field label="Campus (Box / Folder / Shelf)">
+            <Field label="Campus">
               <input
                 value={form.campus}
                 onChange={(e) => setForm((f) => ({ ...f, campus: e.target.value }))}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                placeholder="Box 2-A / Folder TM-1"
+                placeholder="Pablo Borbon / Alangilan / Malvar / Lipa / Nasugbu"
               />
             </Field>
           </div>
@@ -1119,7 +1339,10 @@ function ValidityPill({ tone, label }) {
       : "bg-emerald-50 text-emerald-700 border-emerald-200";
 
   return (
-    <span className={`inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-semibold border ${styles}`} title={label}>
+    <span
+      className={`inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-semibold border ${styles}`}
+      title={label}
+    >
       {label}
     </span>
   );

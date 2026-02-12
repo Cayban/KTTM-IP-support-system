@@ -1,6 +1,7 @@
 // src/pages/KttmDashboardPage.jsx
 import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
+import rmsLogo from "./assets/rmslogo.png";
 
 // API base — use Vite env `VITE_API_URL` or fallback to localhost:3001
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
@@ -372,14 +373,14 @@ export default function KttmDashboardPage() {
       {/* dark overlay for readability */}
       <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-[2px] -z-10" />
 
-      {/* Header (shrink-0, sticky) */}
-      <header className="sticky top-0 z-20 shrink-0">
+      {/* Header (shrink-0, fixed) */}
+      <header className="fixed top-0 left-0 right-0 z-20 shrink-0">
         <div className="backdrop-blur-md bg-slate-950/55 border-b border-white/10">
           <div className="w-full px-5 md:px-8 xl:px-10 py-3">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="h-10 w-10 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center overflow-hidden shrink-0">
-                  <img src="/kttm.jpg" alt="KTTM Logo" className="h-full w-full object-contain scale-125" />
+                  <img src={rmsLogo} alt="RMS Logo" className="h-full w-full object-contain scale-125" />
                 </div>
 
                 <div className="leading-tight min-w-0">
@@ -402,7 +403,7 @@ export default function KttmDashboardPage() {
       </header>
 
       {/* ✅ KEY FIX: main is flex-1 min-h-0 so internal scroll works and bottom won't get cut */}
-      <main className="flex-1 min-h-0 overflow-hidden px-5 md:px-8 xl:px-10 py-4">
+      <main className="flex-1 min-h-0 overflow-hidden px-5 md:px-8 xl:px-10 py-4 pt-[70px]">
         {/* Outer shell */}
         <div className="h-full rounded-3xl bg-white/90 backdrop-blur-sm border border-white/30 shadow-2xl overflow-hidden">
           {/* Two-column layout */}
@@ -440,18 +441,7 @@ export default function KttmDashboardPage() {
                 <Card>
                   <CardHeader title="Filters" subtitle="Applies to analytics & calendar" />
                   <div className="p-4 pt-0 space-y-4 max-h-[500px] overflow-y-auto">
-                    <div>
-                      <div className="text-[11px] font-semibold text-slate-500">SEARCH</div>
-                      <input
-                        value={q}
-                        onChange={(e) => setQ(e.target.value)}
-                        placeholder="Title / inventor / campus / ID..."
-                        className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                      />
-                      <div className="mt-2 text-[11px] text-slate-500">
-                        Tip: search works with your backend query param <b>q</b>.
-                      </div>
-                    </div>
+                   
 
                     <div>
                       <div className="text-[11px] font-semibold text-slate-500">IP TYPE</div>
